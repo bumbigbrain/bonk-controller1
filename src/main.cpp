@@ -4,8 +4,11 @@
 #include <time.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
 
-
+#define PUSH_BUTTON 19
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
@@ -15,296 +18,308 @@
 // SCL -> GPIO 22
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-uint8_t targetAddress1[] = {0x3C, 0x61, 0x05, 0x03, 0xC3, 0x78};
-uint8_t targetAddress2[] = {0xE8, 0xDB, 0x84, 0x00, 0xDC, 0xF0};
-uint8_t targetAddress3[] = {0xA4, 0xCF, 0x12, 0x8F, 0xCA, 0x28};
+// Controller2Address's peer
+uint8_t Controller2Address[] = {0x3C, 0x61, 0x05, 0x03, 0xD4, 0xB0};
+esp_now_peer_info_t peerInfoController2;
+
+// moleController1Address's peer
+uint8_t MoleController1Address[] = {0x3C, 0x61, 0x05, 0x03, 0xC3, 0x78};
+esp_now_peer_info_t peerInfoMoleController1;
+
+
+uint8_t MoleController2Address[] = {0xE8, 0xDB, 0x84, 0x00, 0xDC, 0xF0};
+esp_now_peer_info_t peerInfoMoleController2;
 
 
 
-// GunController's message
-typedef struct startGame {
-  bool start;
-} startGame;
+typedef struct ControllerMessage {
+  int gameState;
 
-// Target's message
-typedef struct targetMessage {
-  int targetState;
-} targetMessage;
-
-startGame command;
-targetMessage target_message;
+} ControllerMessage;
 
 
-// define peer
-esp_now_peer_info_t peerInfoTarget1;
-esp_now_peer_info_t peerInfoTarget2;
-esp_now_peer_info_t peerInfoTarget3;
+typedef struct MoleMessage {
+  int mole;
+} MoleMessage;
 
+MoleMessage MoleInfo;
+ControllerMessage ControllerInfo;
+int Controller1Score = 0;
 
-// state0: entry, state1: playing, state2: timeout
-int gameState = 0; 
-// restart game
-bool restart = false;
-int score = 0;
-
-void displayEntry() {
-  display.clearDisplay();
-  display.setTextSize(1); 
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
-  display.println("DOWNING ALL TARGET, PRESS START BUTTON TO START THE GAME");
-  display.display();
-}
-
-
-
-void displayPlaying(int timer_value) {
-  display.clearDisplay();
-  display.setTextSize(1);  
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
-  display.println("PLAYING");
-  display.setCursor(11, 20);
-  display.printf("TIME LEFT : %d\n", timer_value);
-  display.display();
-}
-
-
-void displayTIMEOUT() {
+void displayScore() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(WHITE);
   display.setCursor(0, 10);
-  display.println("TIME OUT !!");
-  display.setCursor(11, 20);
-  display.printf("SCORE : %d", score);
+  display.printf("Score Player 1 : %d\n", Controller1Score);
   display.display();
-  
-  
 }
 
-void Reset() {
-  // UP ALL TARGET
-  // targetState = 1 -> UP 
-  target_message.targetState = 1;
 
-  // UP Target1
-  esp_err_t resultUpTarget1 = esp_now_send(targetAddress1, (uint8_t *) &target_message, sizeof(target_message));
-  if (resultUpTarget1 == ESP_OK) {
-    Serial.println("Up Target1 with success");
-  } else {
-    Serial.println("Up Target1 failed");
-  }
-
-  // UP Target2
-  esp_err_t resultUpTarget2 = esp_now_send(targetAddress2, (uint8_t *) &target_message, sizeof(target_message));
-  if (resultUpTarget2 == ESP_OK) {
-    Serial.println("Up Target2 with success");
-  } else {
-    Serial.println("Down Target2 failed");
-  }
-
-  // UP Target3
-  esp_err_t resultUpTarget3 = esp_now_send(targetAddress3, (uint8_t *) &target_message, sizeof(target_message));
-  if (resultUpTarget3 == ESP_OK) {
-    Serial.println("Up Target3 with success"); 
-  } else {
-    Serial.println("Down Target3 failed");
-  }
-
-  // reset score
-  score = 0;
+void displayMatched() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.printf("Press Start !!");
+  display.display();
 }
 
-void DownAllTarget() {
-  // targetState = 0 -> DOWN  
-  target_message.targetState = 0;
+void displayNotMatch() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.printf("Not match ");
+  display.display();
+}
 
+
+void displayCountdown() {
   
-  // Down Target1
-  esp_err_t resultDownTarget1 = esp_now_send(targetAddress1, (uint8_t *) &target_message, sizeof(target_message));
-  if (resultDownTarget1 == ESP_OK) {
-    Serial.println("Sent with success");
-  } else {
-    Serial.println("Error sending the data");
-  }
+  // Countdown for 5 sec
+  int msec = 0, trigger = 5;
+  clock_t before = clock();
 
-  
-   // Down Target2
-  esp_err_t resultDownTarget2 = esp_now_send(targetAddress2, (uint8_t *) &target_message, sizeof(target_message));
-  if (resultDownTarget2 == ESP_OK) {
-    Serial.println("Sent with success");
-  } else {
-    Serial.println("Error sending the data");
-  }
-
- // Down Target3
-  esp_err_t resultDownTarget3 = esp_now_send(targetAddress3, (uint8_t *) &target_message, sizeof(target_message));
-  if (resultDownTarget3 == ESP_OK) {
-    Serial.println("Sent with success");
-  } else {
-    Serial.println("Error sending the data");
-  }
+  do {
+    
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 10);
+    display.println("Get Ready");
+    display.setCursor(11, 20);
+    display.printf("%d\n", trigger - msec);
+    display.display();
+    
+    clock_t difference = clock() - before;
+    msec = difference * 1000 / CLOCKS_PER_SEC;
+    
+  } while (msec < trigger);
 
 
 }
 
-bool isGunController(const uint8_t *sentmac) {
-  uint8_t test[6] = {0x3c, 0x61, 0x05, 0x03, 0xa2, 0x74};
-  for (int i=0; i<6; i++){
-    if (test[i] != sentmac[i]) {
-      
+
+
+void displayPlaying(int time_left) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.println("PLAYING");
+  display.setCursor(11,20);
+  display.printf("TIME LEFT : %d\n", time_left);
+  display.display();
+}
+
+
+bool isController2(const uint8_t *sentmac) {
+  uint8_t address[6] = {0x3C, 0x61, 0x05, 0x03, 0xD4, 0xB0};
+  for (int i=0; i<6; i++) {
+    if (address[i] != sentmac[i]) {
       return false;
-    }  
+    }
   }
   return true;
+}
+
+void sendGameStateToController2() {
+  esp_err_t result = esp_now_send(Controller2Address, (uint8_t *) &ControllerInfo, sizeof(ControllerInfo));
+  if (result == ESP_OK) {
+    Serial.println("Send state to Controller2 : SUCCESS");
+  } else {
+    Serial.println("Sent state to Controller2 : FAILED");
+  }
+}
+
+void UpMole1() {
+  MoleInfo.mole = 1;
+  esp_err_t result = esp_now_send(MoleController1Address, (uint8_t *) &MoleInfo, sizeof(MoleInfo)); 
+  if (result == ESP_OK) {
+    Serial.println("Send state to MoleController1 : SUCCESS");
+  } else {
+    Serial.println("Sent state to MoleController1 : FAILED");
+  }
   
 }
 
-void showMacAddress(const uint8_t *sentmac) {
-  Serial.printf("MAC : ");
-  for (int i=0; i<6; i++) {
-    Serial.printf("%x ", sentmac[i]);
+
+void UpMole2() {
+  MoleInfo.mole = 1;
+  esp_err_t result = esp_now_send(MoleController2Address, (uint8_t *) &MoleInfo, sizeof(MoleInfo)); 
+  if (result == ESP_OK) {
+    Serial.println("Send state to MoleController2 : SUCCESS");
+  } else {
+    Serial.println("Sent state to MoleController2 : FAILED");
   }
-  Serial.println("");
+  
+}
+
+void UpMoleMaster() {
+  int rand_mole = rand();
+  rand_mole = rand_mole % 6;
+  if (rand_mole == 0) {
+    UpMole1();
+  } else if (rand_mole == 2) {
+    UpMole2(); 
+  }
+  delay(1000);
+}
+
+int rand(void);
+
+
+void Playing() { 
+  //UpMole1();
+
+  int rand_mole;
+  
+  // Playing for 30 sec
+  int msec = 0, trigger = 30;
+  clock_t before = clock();
+
+  do {
+
+    displayPlaying(trigger - msec);
+    UpMoleMaster(); 
+
+    clock_t difference = clock() - before;
+    msec = difference * 1000 / CLOCKS_PER_SEC;
+    
+  } while (msec < trigger);
+
+   
+}
+
+bool Debounce() {
+  if (digitalRead(PUSH_BUTTON) == LOW) {
+    delay(50);
+    if (digitalRead(PUSH_BUTTON) == HIGH) {
+      return true;
+    }
+  }
+  return false;
 }
 
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.println("SEND TO TARGET");
-  showMacAddress(mac_addr);
+  Serial.println("SEND TO CONTROLLER2 : ");
   delay(300);
-  
 }
 
 
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
-  memcpy(&command, incomingData, sizeof(command));
-  
-  if (isGunController(mac)) { // GunController's message
-    if (gameState == 0) {
-      gameState = 1;   
-      Serial.println("STARTING... -> UP TARGET, RESTARTED TIMER, RESTARTED SCORE");  
-    } else if (gameState == 1) {
-      restart = true;
-      Serial.println("RESTARTING... -> UP TARGET, RESTARTED TIMER, RESTARTED SCORE");    
-    }
-    Reset();
-  } else { 
-    if (gameState == 1) { // Target's message
-      score++;   
-      showMacAddress(mac); 
-      Serial.printf("Score : %d\n", score);
-      delay(3000);
-    } 
 
-    
+  if (isController2(mac)) {
+  } else {
+    Controller1Score++;
   }
-
-
+  
 }
 
-
-
-
- 
 void setup() {
-
+  ControllerInfo.gameState = 0;
   Serial.begin(9600);
   WiFi.mode(WIFI_STA);
+  //setup BUTTON
+  pinMode(PUSH_BUTTON, INPUT_PULLUP);
 
-  //Display setup
+  //setup DISPLAY
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
     for(;;);
   }
 
-
-  // Init ESP-NOW
+  // init ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
 
-  // Do OnDataSent when send
+  //Do OnDataSent when send
   esp_now_register_send_cb(OnDataSent);
-  // Do OnDataRecv when recieved 
+
+  //Do OnDataRecv when recieve
   esp_now_register_recv_cb(OnDataRecv);
 
-
-  // Registering peer  
-  // Register target 1
-  memcpy(peerInfoTarget1.peer_addr, targetAddress1, 6);
-  peerInfoTarget1.channel = 0;
-  peerInfoTarget1.encrypt = false;
-  esp_now_add_peer(&peerInfoTarget1);
-  if (esp_now_add_peer(&peerInfoTarget1) != ESP_OK){
-    Serial.println("Failed to add Target1");
+  //register peer Controller2
+  memcpy(peerInfoController2.peer_addr, Controller2Address, 6);
+  peerInfoController2.channel = 0;
+  peerInfoController2.encrypt = false;
+  esp_now_add_peer(&peerInfoController2);
+  if (esp_now_add_peer(&peerInfoController2) != ESP_OK) {
+    Serial.println("Failed to add peer Controller2");
   }
 
-  // Register target 2
-  memcpy(peerInfoTarget2.peer_addr, targetAddress2, 6);
-  peerInfoTarget2.channel = 0;
-  peerInfoTarget2.encrypt = false;
-  esp_now_add_peer(&peerInfoTarget2);
-  if (esp_now_add_peer(&peerInfoTarget2) != ESP_OK) {
-    Serial.println("Failed to add Target2");
+
+  // register peer MoleController1
+  memcpy(peerInfoMoleController1.peer_addr, MoleController1Address, 6);
+  peerInfoMoleController1.channel = 0;
+  peerInfoMoleController1.encrypt = false;
+  esp_now_add_peer(&peerInfoMoleController1);
+  if (esp_now_add_peer(&peerInfoMoleController1) != ESP_OK) {
+    Serial.println("Failed to add peer MoleController1");
   }
 
-  // Register target 3
-  memcpy(peerInfoTarget3.peer_addr, targetAddress3, 6);
-  peerInfoTarget3.channel = 0;
-  peerInfoTarget3.encrypt = false; 
-  esp_now_add_peer(&peerInfoTarget3);
-  if (esp_now_add_peer(&peerInfoTarget3) != ESP_OK) {
-    Serial.println("Failed to add Target3");
+  // register peer MoleController2
+  memcpy(peerInfoMoleController2.peer_addr, MoleController2Address, 6);
+  peerInfoMoleController2.channel = 0;
+  peerInfoMoleController2.encrypt = false;
+  esp_now_add_peer(&peerInfoMoleController2);
+  if (esp_now_add_peer(&peerInfoMoleController2) != ESP_OK) {
+    Serial.println("Failed to add peer MoleController2");
   }
-
   
 
   
+  // request matching to Controller2
+  ControllerInfo.gameState = 1;
+  esp_err_t resultMatchingController2 = esp_now_send(Controller2Address, (uint8_t *) &ControllerInfo, sizeof(ControllerInfo));
+  if (resultMatchingController2 == ESP_OK) {
+    Serial.println("Sent with success");
+  } else {
+    Serial.println("Error sending thte data");
+  }
+  
+  
+
 }
- 
+
 void loop() {
-  if (gameState == 0) {
-    displayEntry(); 
-    DownAllTarget();   
-
-  } else if (gameState == 1) {
-    
-    // PLAYING FOR 5 SEC
-    int msec = 0, trigger = 5;
-    clock_t before = clock();
-     
-    do {
+  // if (digitalRead(PUSH_BUTTON) == LOW) { // }
+  if (ControllerInfo.gameState == 0) { // No matching
+    displayNotMatch();
+  }
+  if (ControllerInfo.gameState == 1) { // Entry
+    displayMatched();
+    if (Debounce()) {
+      ControllerInfo.gameState = 2;
+      sendGameStateToController2();
       
-      if (restart == true) {
-        gameState = 1;
-        restart = false;
-        break;
-      }
-
-      displayPlaying(trigger - msec);
-
-      clock_t difference = clock() - before;
-      msec = difference * 1000 / CLOCKS_PER_SEC;
-      //Serial.printf("msec : %d\n", msec);
-    
-    } while (msec < trigger);
-
-    if (msec >= trigger) {
-      //Serial.println("TIMEOUT");
-      gameState = 2;
-    }
-
-
-  } else if (gameState == 2) {
-    displayTIMEOUT();
-    gameState = 0;
-    delay(3000);
+    }  
+  }
+  
+  if (ControllerInfo.gameState == 2) { // Countdown
+    displayCountdown();        
+    ControllerInfo.gameState = 3; // Change state to Playing
+    sendGameStateToController2(); 
     
   }
-  delay(1000);
+  
+  if (ControllerInfo.gameState == 3) { // Playing
+    Playing();
+    ControllerInfo.gameState = 4;
+    sendGameStateToController2();
+    
+  }
+  
+  if (ControllerInfo.gameState == 4) { // Show Score
+    displayScore(); 
+  }
   
 
+
+  
 }
+
