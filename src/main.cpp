@@ -34,24 +34,43 @@ esp_now_peer_info_t peerInfoMoleController2;
 
 typedef struct ControllerMessage {
   int gameState;
+  int ScorePlayer1;
+  int ScorePlayer2;
 
 } ControllerMessage;
 
 
 typedef struct MoleMessage {
   int mole;
+  //bool isBonked;
 } MoleMessage;
 
 MoleMessage MoleInfo;
 ControllerMessage ControllerInfo;
 int Controller1Score = 0;
+int Controller2Score = 0;
+bool canSendMole1 = true;
+bool canSendMole2 = true;
+
+
+
 
 void displayScore() {
+
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(WHITE);
   display.setCursor(0, 10);
   display.printf("Score Player 1 : %d\n", Controller1Score);
+  display.setCursor(0, 20);
+  display.printf("Score Player 2 : %d\n", ControllerInfo.ScorePlayer2);
+  if (Controller1Score > ControllerInfo.ScorePlayer1) {      
+    display.setCursor(0, 30); 
+    display.printf("Player 1 WIN!!!");
+  } else {
+    display.setCursor(0, 40); 
+    display.printf("Player 2 WIN!!!");
+  }
   display.display();
 }
 
@@ -124,6 +143,33 @@ bool isController2(const uint8_t *sentmac) {
   return true;
 }
 
+
+bool isMole1(const uint8_t *sentmac) {
+  uint8_t address[6] = {0x3C, 0x61, 0x05, 0x03, 0xC3, 0x78};
+  for (int i=0; i<6; i++) {
+    if (address[i] != sentmac[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+
+
+
+bool isMole2(const uint8_t *sentmac) {
+  uint8_t address[6] = {0xE8, 0xDB, 0x84, 0x00, 0xDC, 0xF0}; 
+  for (int i=0; i<6; i++) {
+    if (address[i] != sentmac[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+
+
+
 void sendGameStateToController2() {
   esp_err_t result = esp_now_send(Controller2Address, (uint8_t *) &ControllerInfo, sizeof(ControllerInfo));
   if (result == ESP_OK) {
@@ -133,8 +179,48 @@ void sendGameStateToController2() {
   }
 }
 
+
+void ResetMole() {
+  MoleInfo.mole = -1;
+   
+  esp_err_t result = esp_now_send(MoleController1Address, (uint8_t *) &MoleInfo, sizeof(MoleInfo)); 
+  if (result == ESP_OK) {
+    Serial.println("Send state to MoleController1 : SUCCESS");
+  } else {
+    Serial.println("Sent state to MoleController1 : FAILED");
+  }
+  
+   
+  result = esp_now_send(MoleController2Address, (uint8_t *) &MoleInfo, sizeof(MoleInfo)); 
+  if (result == ESP_OK) {
+    Serial.println("Send state to MoleController2 : SUCCESS");
+  } else {
+    Serial.println("Sent state to MoleController2 : FAILED");
+  }
+  
+}
+
 void UpMole1() {
-  MoleInfo.mole = 1;
+
+  int mode = rand();    
+  mode = mode % 4; // 0 1 2 3 4
+
+  if (mode == 0) {
+    MoleInfo.mole = 0;   
+  } 
+
+  if (mode == 1) {
+    MoleInfo.mole = 1; 
+  } 
+
+  if (mode == 2) {
+    MoleInfo.mole = 2;
+  }
+
+  if (mode == 3) {
+    MoleInfo.mole = 3;
+  }
+   
   esp_err_t result = esp_now_send(MoleController1Address, (uint8_t *) &MoleInfo, sizeof(MoleInfo)); 
   if (result == ESP_OK) {
     Serial.println("Send state to MoleController1 : SUCCESS");
@@ -146,7 +232,27 @@ void UpMole1() {
 
 
 void UpMole2() {
-  MoleInfo.mole = 1;
+
+
+  int mode = rand();    
+  mode = mode % 4; // 0 1 2 3 4
+
+  if (mode == 0) {
+    MoleInfo.mole = 0;   
+  } 
+
+  if (mode == 1) {
+    MoleInfo.mole = 1; 
+  } 
+
+  if (mode == 2) {
+    MoleInfo.mole = 2;
+  }
+
+  if (mode == 3) {
+    MoleInfo.mole = 3;
+  }
+   
   esp_err_t result = esp_now_send(MoleController2Address, (uint8_t *) &MoleInfo, sizeof(MoleInfo)); 
   if (result == ESP_OK) {
     Serial.println("Send state to MoleController2 : SUCCESS");
@@ -158,13 +264,15 @@ void UpMole2() {
 
 void UpMoleMaster() {
   int rand_mole = rand();
-  rand_mole = rand_mole % 6;
-  if (rand_mole == 0) {
+  rand_mole = rand_mole % 2;
+  if (rand_mole == 0 && canSendMole1) {
     UpMole1();
-  } else if (rand_mole == 2) {
+    canSendMole1 = false;
+  } else if (rand_mole == 1 && canSendMole2) {
     UpMole2(); 
+    canSendMole2 = false;
   }
-  delay(1000);
+  delay(50);
 }
 
 int rand(void);
@@ -172,9 +280,7 @@ int rand(void);
 
 void Playing() { 
   //UpMole1();
-
-  int rand_mole;
-  
+ 
   // Playing for 30 sec
   int msec = 0, trigger = 30;
   clock_t before = clock();
@@ -212,7 +318,13 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
 
   if (isController2(mac)) {
-  } else {
+    memcpy(&ControllerInfo, incomingData, sizeof(ControllerInfo));
+    
+  } else if (isMole1(mac) && ControllerInfo.gameState == 3) {
+    canSendMole1 = true;
+    Controller1Score++;
+  } else if (isMole2(mac) && ControllerInfo.gameState == 3) {
+    canSendMole2 = true;
     Controller1Score++;
   }
   
@@ -287,14 +399,21 @@ void setup() {
 }
 
 void loop() {
+
+
+
+
+
   // if (digitalRead(PUSH_BUTTON) == LOW) { // }
   if (ControllerInfo.gameState == 0) { // No matching
     displayNotMatch();
   }
   if (ControllerInfo.gameState == 1) { // Entry
+    Controller1Score = 0;
     displayMatched();
     if (Debounce()) {
       ControllerInfo.gameState = 2;
+      
       sendGameStateToController2();
       
     }  
@@ -314,11 +433,33 @@ void loop() {
     
   }
   
-  if (ControllerInfo.gameState == 4) { // Show Score
-    displayScore(); 
+  if (ControllerInfo.gameState == 4) { // Exchange Score
+    ControllerInfo.ScorePlayer1 = Controller1Score;
+    if (ControllerInfo.ScorePlayer2 > 0) {
+      ControllerInfo.gameState = 5;
+      sendGameStateToController2();
+      
+    } 
   }
   
-
+  if (ControllerInfo.gameState == 5) {
+    displayScore();
+    if (Debounce()) {
+      //ControllerInfo.gameState = 1; 
+      //Add
+      ControllerInfo.gameState = 6;
+      sendGameStateToController2();
+    }
+    
+    
+  }
+  
+  if (ControllerInfo.gameState == 6) {
+    ResetMole();  
+    ControllerInfo.gameState = 1;
+  }
+  
+  
 
   
 }
