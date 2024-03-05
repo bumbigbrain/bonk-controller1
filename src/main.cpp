@@ -64,7 +64,7 @@ void displayScore() {
   display.printf("Score Player 1 : %d\n", Controller1Score);
   display.setCursor(0, 20);
   display.printf("Score Player 2 : %d\n", ControllerInfo.ScorePlayer2);
-  if (Controller1Score > ControllerInfo.ScorePlayer1) {      
+  if (Controller1Score > ControllerInfo.ScorePlayer2) {      
     display.setCursor(0, 30); 
     display.printf("Player 1 WIN!!!");
   } else {
